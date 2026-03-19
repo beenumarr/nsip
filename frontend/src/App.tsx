@@ -1,20 +1,10 @@
-import Map from './components/Map'
-import logo from './assets/nsip-logo.svg'
-import './App.css'
+import Layout from './components/Layout'
+import { useThreats } from './hooks/useThreats'
 
 function App() {
-  return (
-    <div className="app-shell">
-      <Map />
-      <div className="brand-card">
-        <img src={logo} alt="NSIP logo" className="brand-logo" />
-        <div className="brand-copy">
-          <span className="brand-kicker">NSIP</span>
-          <h1>Nigeria Security Intelligence Platform</h1>
-        </div>
-      </div>
-    </div>
-  )
+  const threatState = useThreats()
+
+  return <Layout {...threatState} />
 }
 
 export default App

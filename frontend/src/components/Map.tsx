@@ -1,32 +1,46 @@
-import { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import { useMemo } from 'react'
 import L from 'leaflet'
 import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
-import { io } from 'socket.io-client'
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
-import markerIcon from 'leaflet/dist/images/marker-icon.png'
-import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import { getThreats } from '../services/api'
 import type { Threat } from '../types/threat'
 
-delete (L.Icon.Default.prototype as L.Icon.Default & { _getIconUrl?: unknown })
-  ._getIconUrl
-
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-})
-
 const nigeriaCenter: [number, number] = [9.082, 8.6753]
-const socket = io('http://127.0.0.1:5000', {
-  autoConnect: false,
-})
+
+type ThreatMapProps = {
+  threats: Threat[]
+  selectedThreatId: number | null
+  onSelectThreat: (threat: Threat) => void
+}
 
 type ThreatMarker = Threat & {
   displayLat: number
   displayLng: number
 }
+
+const redMarkerIcon = L.divIcon({
+  className: 'nsip-marker-shell',
+  html: `
+    <div class="nsip-marker-core">
+      <div class="nsip-marker-pulse"></div>
+      <div class="nsip-marker-pin"></div>
+    </div>
+  `,
+  iconSize: [28, 28],
+  iconAnchor: [14, 24],
+  popupAnchor: [0, -18],
+})
+
+const activeMarkerIcon = L.divIcon({
+  className: 'nsip-marker-shell',
+  html: `
+    <div class="nsip-marker-core">
+      <div class="nsip-marker-pulse nsip-marker-pulse-active"></div>
+      <div class="nsip-marker-pin nsip-marker-pin-active"></div>
+    </div>
+  `,
+  iconSize: [30, 30],
+  iconAnchor: [15, 25],
+  popupAnchor: [0, -18],
+})
 
 function buildThreatMarkers(threats: Threat[]): ThreatMarker[] {
   const groupedThreats = new Map<string, Threat[]>()
@@ -41,6 +55,7 @@ function buildThreatMarkers(threats: Threat[]): ThreatMarker[] {
   return Array.from(groupedThreats.values()).flatMap((group) => {
     if (group.length === 1) {
       const [threat] = group
+
       return [{ ...threat, displayLat: threat.lat, displayLng: threat.lng }]
     }
 
@@ -57,109 +72,46 @@ function buildThreatMarkers(threats: Threat[]): ThreatMarker[] {
   })
 }
 
-function ThreatMap() {
-  const [threats, setThreats] = useState<Threat[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+function ThreatMap({
+  threats,
+  selectedThreatId,
+  onSelectThreat,
+}: ThreatMapProps) {
   const threatMarkers = useMemo(() => buildThreatMarkers(threats), [threats])
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadThreats() {
-      try {
-        const data = await getThreats()
-
-        if (!isMounted) {
-          return
-        }
-
-        setThreats(data)
-        setError(null)
-      } catch (error) {
-        if (!isMounted) {
-          return
-        }
-
-        if (axios.isAxiosError(error)) {
-          if (error.code === 'ECONNABORTED') {
-            setError('Backend request timed out. Make sure the Flask server is running on port 5000.')
-            return
-          }
-
-          if (!error.response) {
-            setError('Cannot reach the backend. Start the Flask server on http://127.0.0.1:5000.')
-            return
-          }
-        }
-
-        setError('Failed to load threats.')
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadThreats()
-    const refreshInterval = window.setInterval(() => {
-      void loadThreats()
-    }, 10000)
-
-    return () => {
-      isMounted = false
-      window.clearInterval(refreshInterval)
-    }
-  }, [])
-
-  useEffect(() => {
-    function handleThreatCreated(threat: Threat) {
-      setThreats((currentThreats) => {
-        if (currentThreats.some((existingThreat) => existingThreat.id === threat.id)) {
-          return currentThreats
-        }
-
-        return [threat, ...currentThreats]
-      })
-      setError(null)
-      setIsLoading(false)
-    }
-
-    socket.connect()
-    socket.on('threat_created', handleThreatCreated)
-
-    return () => {
-      socket.off('threat_created', handleThreatCreated)
-      socket.disconnect()
-    }
-  }, [])
-
-  if (isLoading) {
-    return <div>Loading...</div>
-  }
-
-  if (error) {
-    return <div>{error}</div>
-  }
 
   return (
     <MapContainer
       center={nigeriaCenter}
       zoom={6}
       scrollWheelZoom
-      style={{ height: '100vh', width: '100%' }}
+      zoomControl={false}
+      className="h-full w-full"
     >
       <TileLayer
-        attribution='&copy; OpenStreetMap contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution="&copy; Esri & contributors"
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+      />
+      <TileLayer
+        attribution="&copy; Esri"
+        opacity={0.9}
+        url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
       />
 
       {threatMarkers.map((threat) => (
-        <Marker key={threat.id} position={[threat.displayLat, threat.displayLng]}>
+        <Marker
+          key={threat.id}
+          position={[threat.displayLat, threat.displayLng]}
+          icon={threat.id === selectedThreatId ? activeMarkerIcon : redMarkerIcon}
+          eventHandlers={{
+            click: () => onSelectThreat(threat),
+          }}
+        >
           <Popup>
             <strong>{threat.type}</strong>
             <br />
             {threat.location}
+            <br />
+            <span>{new Date(threat.created_at).toLocaleString()}</span>
           </Popup>
         </Marker>
       ))}
